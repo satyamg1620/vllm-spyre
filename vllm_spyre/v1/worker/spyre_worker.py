@@ -32,6 +32,7 @@ import vllm_spyre.perf_metrics as perf_metrics
 import vllm_spyre.utils as utils_spyre
 from vllm_spyre.model_executor.model_loader import spyre_setup
 from vllm_spyre.platform import SpyrePlatform
+from vllm_spyre.v1.kv_connector.base import SpyreKVConnectorBase
 from vllm_spyre.v1.worker.spyre_model_runner import (
     ChunkedPrefillModelRunner,
     SpyrePoolingModelRunner,
@@ -260,6 +261,11 @@ class SpyreWorker(WorkerBase):
                 self.vllm_config, self.is_driver_worker, self.rank
             )
 
+        # Initialize KV connector if configured
+        self._kv_connector: SpyreKVConnectorBase | None = None
+        if vllm_config.kv_transfer_config is not None:
+            self._init_kv_connector(vllm_config)
+
         self._env_initialized = False
         # Torch profiler. Enabled and configured through env vars:
         # VLLM_TORCH_PROFILER_DIR=/path/to/save/trace
@@ -320,6 +326,39 @@ class SpyreWorker(WorkerBase):
 
         # A small all_reduce for warmup.
         torch.distributed.all_reduce(torch.zeros(1).cpu())
+
+    def _init_kv_connector(self, vllm_config: VllmConfig) -> None:
+        """Initialize the KV connector from config."""
+        from vllm.distributed.kv_transfer.kv_connector.factory import (
+            KVConnectorFactory,
+        )
+        from vllm.distributed.kv_transfer.kv_connector.v1.base import (
+            KVConnectorRole,
+        )
+
+        connector = KVConnectorFactory.create_connector(
+            config=vllm_config,
+            role=KVConnectorRole.WORKER,
+        )
+        if isinstance(connector, SpyreKVConnectorBase):
+            self._kv_connector = connector
+            logger.info(
+                "KV connector initialized: %s",
+                type(connector).__name__,
+            )
+        else:
+            logger.warning(
+                "KV connector %s is not a SpyreKVConnectorBase, "
+                "Spyre-specific features will not be available",
+                type(connector).__name__,
+            )
+            self._kv_connector = None
+
+    def get_kv_connector_handshake_metadata(self):
+        """Return connector handshake metadata for P/D discovery."""
+        if self._kv_connector is not None:
+            return self._kv_connector.get_handshake_metadata()
+        return None
 
     def redirect_logs_to_files(self) -> None:
         """Redirects all stdout and stderr to a rank-specific logfile.
@@ -418,6 +457,14 @@ class SpyreWorker(WorkerBase):
         load_model_total_t = load_model_end_t - load_model_start_t
         self.perf_metrics.log("load model time", load_model_total_t, model=self.model_config.model)
         logger.info("load model took %.3fs", load_model_total_t)
+
+        # Register KV caches with connector after model load
+        if self._kv_connector is not None and hasattr(self.model_runner, "_model"):
+            model = self.model_runner._model
+            if model is not None and hasattr(model, "past_key_value_states"):
+                self._kv_connector.register_spyre_kv_caches(
+                    model.past_key_value_states
+                )
 
     def _warmup_spyre_dynamic_size(self, special_token_ids):
         warmup_start_t = time.time()
@@ -752,7 +799,9 @@ class SpyreWorker(WorkerBase):
         self,
         scheduler_output: "SchedulerOutput",
     ) -> ModelRunnerOutput | None:
-        output = self.model_runner.execute_model(scheduler_output)
+        output = self.model_runner.execute_model(
+            scheduler_output, kv_connector=self._kv_connector
+        )
         return output if self.is_driver_worker else None
 
     def _get_num_tokens(self, r: NewRequestData) -> int:

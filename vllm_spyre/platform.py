@@ -270,6 +270,17 @@ class SpyrePlatform(Platform):
 
         handle_disable_compilation(vllm_config, is_decoder)
 
+        # Log KV connector configuration if present
+        if vllm_config.kv_transfer_config is not None:
+            logger.info(
+                "KV transfer configured: connector=%s, role=%s, rank=%s, "
+                "parallel_size=%s",
+                vllm_config.kv_transfer_config.kv_connector,
+                vllm_config.kv_transfer_config.kv_role,
+                vllm_config.kv_transfer_config.kv_rank,
+                vllm_config.kv_transfer_config.kv_parallel_size,
+            )
+
     @classmethod
     def use_all_gather(cls) -> bool:
         """

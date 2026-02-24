@@ -244,6 +244,7 @@ class BaseSpyreModelRunner(ABC, Generic[InputBatchT, RequestStateT, ModelInputsT
     def execute_model(
         self,
         scheduler_output: SchedulerOutput,
+        kv_connector=None,
         **kwargs,
     ) -> ModelRunnerOutput:
         raise NotImplementedError
@@ -614,6 +615,7 @@ class SpyrePoolingModelRunner(
     def execute_model(
         self,
         scheduler_output: SchedulerOutput,
+        kv_connector=None,
         **kwargs,
     ) -> ModelRunnerOutput:
         t0 = time.time()
@@ -1610,6 +1612,7 @@ class ChunkedPrefillModelRunner(
     def execute_model(
         self,
         scheduler_output: SchedulerOutput,
+        kv_connector=None,
         **kwargs,
     ) -> ModelRunnerOutput:
         t0 = time.time()
@@ -1623,6 +1626,16 @@ class ChunkedPrefillModelRunner(
         # Initialize internal request states if this is the first chunk of a very new prefill
         self.maybe_setup_new_prefill(scheduler_output)
 
+        # Bind KV connector metadata if available
+        if kv_connector is not None and hasattr(
+            scheduler_output, "connector_metadata"
+        ):
+            connector_meta = getattr(
+                scheduler_output, "connector_metadata", None
+            )
+            if connector_meta is not None:
+                kv_connector.bind_connector_metadata(connector_meta)
+
         incomplete_prefill = self.check_incomplete_prefill(scheduler_output)
         if incomplete_prefill and self.is_cached_chunk(scheduler_output):
             # "idle" step, the scheduled chunk is fully cached so we don't call the model. The
@@ -1631,10 +1644,22 @@ class ChunkedPrefillModelRunner(
             # first token.
             t1 = time.time() - t0
             logger.debug("t_forward_pass: %.2fms [prefix cache hit][batch size 1]", (t1 * 1000))
+            if kv_connector is not None and kv_connector.has_connector_metadata():
+                kv_connector.clear_connector_metadata()
             return self.prefill_output()
 
         model_input = self.prepare_model_input(scheduler_output)
         is_prefill = model_input.is_prompt
+
+        # Start async KV loading before forward pass (if connector is active)
+        if kv_connector is not None and kv_connector.has_connector_metadata():
+            from vllm.forward_context import ForwardContext
+
+            forward_ctx = ForwardContext(
+                attn_metadata=self.build_attn_metadata(model_input),
+                vllm_config=self.vllm_config,
+            )
+            kv_connector.start_load_kv(forward_ctx)
 
         # Execute the model
         attn_metadata = self.build_attn_metadata(model_input)
@@ -1651,6 +1676,19 @@ class ChunkedPrefillModelRunner(
                 masks=None,
                 is_prompt=model_input.is_prompt,
             )
+
+        # Post-forward KV save for all layers (if connector is active)
+        if kv_connector is not None and kv_connector.has_connector_metadata():
+            if hasattr(self.model, "past_key_value_states"):
+                for layer_idx in range(len(self.model.past_key_value_states)):
+                    layer_name = f"layer_{layer_idx}"
+                    kv_connector.save_kv_layer(
+                        layer_name,
+                        self.model.past_key_value_states[layer_idx],
+                        attn_metadata,
+                    )
+                kv_connector.wait_for_save()
+            kv_connector.clear_connector_metadata()
 
         # If the prompt is being prefilled we don't have to sample
         # and generate a new token.
