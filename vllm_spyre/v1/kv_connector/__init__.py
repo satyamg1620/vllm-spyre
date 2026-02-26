@@ -1,13 +1,13 @@
-from vllm_spyre.v1.kv_connector.base import SpyreKVConnectorBase
-from vllm_spyre.v1.kv_connector.example_connector import SpyreExampleConnector
-from vllm_spyre.v1.kv_connector.nixl_connector import SpyreNixlConnector
+from vllm_spyre.v1.kv_connector.base import KVConnectorBase
+from vllm_spyre.v1.kv_connector.example_connector import ExampleConnector
+from vllm_spyre.v1.kv_connector.nixl_connector import NixlConnector
 from vllm_spyre.v1.kv_connector.offloading_connector import (
-    SpyreOffloadingConnector,
+    OffloadingConnector,
 )
 
 __all__ = [
-    "SpyreKVConnectorBase",
-    "SpyreExampleConnector",
-    "SpyreNixlConnector",
-    "SpyreOffloadingConnector",
+    "KVConnectorBase",
+    "ExampleConnector",
+    "NixlConnector",
+    "OffloadingConnector",
 ]

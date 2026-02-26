@@ -1,5 +1,5 @@
 """
-SpyreOffloadingConnector - CPU memory offloading KV connector for Spyre.
+OffloadingConnector - CPU memory offloading KV connector for Spyre.
 
 This connector offloads KV cache from Spyre device memory to CPU memory
 for reuse across requests with matching prompts. This enables prefix
@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
-    KVConnectorMetadata,
     KVConnectorRole,
 )
 from vllm.logger import init_logger
@@ -28,8 +27,8 @@ from vllm.v1.core.sched.output import SchedulerOutput
 
 from vllm_spyre.v1.kv_connector.base import (
     SPYRE_BLOCK_SIZE,
-    SpyreKVConnectorBase,
-    SpyreKVConnectorMetadata,
+    KVConnectorBase,
+    KVConnectorMetadata,
     align_to_spyre_block,
 )
 
@@ -60,7 +59,7 @@ class _CPUKVEntry:
         self.num_layers = num_layers
 
 
-class SpyreOffloadingConnector(SpyreKVConnectorBase):
+class OffloadingConnector(KVConnectorBase):
     """Offloads KV cache to CPU memory for later reuse across requests.
 
     Maintains a dictionary mapping prompt hashes to CPU-side KV cache
@@ -94,14 +93,8 @@ class SpyreOffloadingConnector(SpyreKVConnectorBase):
         # Requests that need KV loading from CPU (scheduler-side)
         self._requests_need_load: dict[str, "Request"] = {}
 
-        # Track requests whose KV should be saved after completion
-        self._requests_to_save: dict[str, list[int]] = {}
-
-        # Finished async saves
-        self._finished_save_ids: set[str] = set()
-
         logger.info(
-            "SpyreOffloadingConnector initialized: max_entries=%d",
+            "OffloadingConnector initialized: max_entries=%d",
             self._max_entries,
         )
 
@@ -118,7 +111,7 @@ class SpyreOffloadingConnector(SpyreKVConnectorBase):
         from CPU memory into the model's past_key_value_states.
         """
         metadata = self._get_connector_metadata()
-        assert isinstance(metadata, SpyreKVConnectorMetadata)
+        assert isinstance(metadata, KVConnectorMetadata)
 
         if self._spyre_kv_caches is None:
             logger.warning(
@@ -185,7 +178,7 @@ class SpyreOffloadingConnector(SpyreKVConnectorBase):
         and stores it in CPU memory for later reuse.
         """
         metadata = self._get_connector_metadata()
-        assert isinstance(metadata, SpyreKVConnectorMetadata)
+        assert isinstance(metadata, KVConnectorMetadata)
 
         if self._spyre_kv_caches is None:
             return
@@ -234,34 +227,6 @@ class SpyreOffloadingConnector(SpyreKVConnectorBase):
         """
         self._evict_if_needed()
 
-    def handle_preemptions(self, preempted_req_ids: set[str]) -> None:
-        """Save preempted requests' KV to CPU before blocks are freed.
-
-        This ensures KV data is preserved even when the device blocks
-        are reclaimed for other requests.
-        """
-        if self._spyre_kv_caches is None:
-            return
-
-        for req_id in preempted_req_ids:
-            if req_id in self._requests_to_save:
-                block_ids = self._requests_to_save.pop(req_id)
-                logger.info(
-                    "Saving preempted request '%s' KV to CPU", req_id
-                )
-                # TODO: Extract and save KV data for preempted request
-                # This requires knowing the token IDs for the request,
-                # which we'd need to track separately
-
-    def get_finished(
-        self, finished_req_ids: set[str]
-    ) -> tuple[set[str] | None, set[str] | None]:
-        """Return IDs of requests that finished async saves."""
-        with self._lock:
-            done = self._finished_save_ids & finished_req_ids
-            self._finished_save_ids -= finished_req_ids
-        return done if done else None, None
-
     # ==============================
     # Scheduler-side methods
     # ==============================
@@ -277,6 +242,7 @@ class SpyreOffloadingConnector(SpyreKVConnectorBase):
         of additional tokens that can be loaded from the cache.
         """
         token_ids = list(request.prompt_token_ids or [])
+        # len - 1: exclude the last token (needs forward pass to compute KV)
         num_tokens = align_to_spyre_block(len(token_ids) - 1)
 
         if num_tokens <= 0:
@@ -317,7 +283,7 @@ class SpyreOffloadingConnector(SpyreKVConnectorBase):
         - If request needs loading from CPU cache, mark as load
         - Otherwise, mark as store (KV will be saved to CPU after completion)
         """
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
 
         for new_req in scheduler_output.scheduled_new_reqs:
             token_ids = list(new_req.prompt_token_ids or [])
@@ -346,13 +312,11 @@ class SpyreOffloadingConnector(SpyreKVConnectorBase):
         request: "Request",
         block_ids: list[int],
     ) -> tuple[bool, dict[str, Any] | None]:
-        """Called when a request finishes. Triggers async CPU offload.
+        """Called when a request finishes.
 
-        Returns True to indicate blocks should not be freed immediately
-        (we need to read from them for the CPU offload).
+        KV is saved synchronously during save_kv_layer, so blocks can
+        be freed immediately (return False).
         """
-        # Schedule async save (in practice, we save synchronously
-        # during save_kv_layer, so we can free blocks immediately)
         return False, None
 
     # ==============================

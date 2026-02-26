@@ -1,5 +1,5 @@
 """
-SpyreExampleConnector - Disk-based debug KV connector for Spyre.
+ExampleConnector - Disk-based debug KV connector for Spyre.
 
 This connector saves/loads KV cache to/from disk using safetensors files.
 It is adapted from the upstream vLLM ExampleConnector to work with Spyre's
@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
-    KVConnectorMetadata,
     KVConnectorRole,
 )
 from vllm.logger import init_logger
@@ -25,8 +24,8 @@ from vllm.v1.core.sched.output import SchedulerOutput
 
 from vllm_spyre.v1.kv_connector.base import (
     SPYRE_BLOCK_SIZE,
-    SpyreKVConnectorBase,
-    SpyreKVConnectorMetadata,
+    KVConnectorBase,
+    KVConnectorMetadata,
     align_to_spyre_block,
 )
 
@@ -41,7 +40,7 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
-class SpyreExampleConnector(SpyreKVConnectorBase):
+class ExampleConnector(KVConnectorBase):
     """Disk-based debug connector for Spyre KV cache save/load.
 
     Saves KV cache to safetensors files on disk, keyed by a hash of
@@ -69,7 +68,7 @@ class SpyreExampleConnector(SpyreKVConnectorBase):
             "shared_storage_path", "/tmp"
         )
         logger.info(
-            "SpyreExampleConnector initialized with storage_path=%s",
+            "ExampleConnector initialized with storage_path=%s",
             self._storage_path,
         )
 
@@ -87,7 +86,7 @@ class SpyreExampleConnector(SpyreKVConnectorBase):
         KV cache buffers at the correct slot positions.
         """
         metadata = self._get_connector_metadata()
-        assert isinstance(metadata, SpyreKVConnectorMetadata)
+        assert isinstance(metadata, KVConnectorMetadata)
 
         if self._spyre_kv_caches is None:
             logger.warning(
@@ -98,7 +97,7 @@ class SpyreExampleConnector(SpyreKVConnectorBase):
         try:
             import safetensors.torch
         except ImportError:
-            logger.error("safetensors is required for SpyreExampleConnector")
+            logger.error("safetensors is required for ExampleConnector")
             return
 
         for req_meta in metadata.requests:
@@ -158,7 +157,7 @@ class SpyreExampleConnector(SpyreKVConnectorBase):
         The layer_name should be in the format "layer_{idx}".
         """
         metadata = self._get_connector_metadata()
-        assert isinstance(metadata, SpyreKVConnectorMetadata)
+        assert isinstance(metadata, KVConnectorMetadata)
 
         if self._spyre_kv_caches is None:
             return
@@ -166,7 +165,7 @@ class SpyreExampleConnector(SpyreKVConnectorBase):
         try:
             import safetensors.torch
         except ImportError:
-            logger.error("safetensors is required for SpyreExampleConnector")
+            logger.error("safetensors is required for ExampleConnector")
             return
 
         # Parse layer index from layer_name
@@ -217,6 +216,7 @@ class SpyreExampleConnector(SpyreKVConnectorBase):
 
         logger.info("External cache hit for request '%s'", request.request_id)
 
+        # len - 1: exclude the last token (needs forward pass to compute KV)
         num_tokens_to_check = align_to_spyre_block(len(token_ids) - 1)
         return num_tokens_to_check - num_computed_tokens, False
 
@@ -243,7 +243,7 @@ class SpyreExampleConnector(SpyreKVConnectorBase):
 
         Resets _requests_need_load after building metadata.
         """
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
 
         for new_req in scheduler_output.scheduled_new_reqs:
             token_ids = list(new_req.prompt_token_ids or [])
@@ -270,7 +270,12 @@ class SpyreExampleConnector(SpyreKVConnectorBase):
     # ==============================
 
     def _found_match_for_prompt(self, prompt_token_ids: list[int]) -> bool:
-        """Check if KV cache files exist on disk for this prompt."""
+        """Check if KV cache files exist on disk for this prompt.
+
+        We use len - 1 because the last token in the prompt is the one
+        about to be generated (the model needs to compute its KV), so
+        only the preceding tokens can be loaded from external cache.
+        """
         num_tokens = align_to_spyre_block(len(prompt_token_ids) - 1)
         if num_tokens <= 0:
             return False

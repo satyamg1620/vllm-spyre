@@ -1,4 +1,4 @@
-"""Tests for SpyreNixlConnector (network-based P/D disaggregation)."""
+"""Tests for NixlConnector (network-based P/D disaggregation)."""
 
 from unittest.mock import MagicMock
 
@@ -7,14 +7,13 @@ import torch
 
 from vllm_spyre.v1.kv_connector.base import (
     SPYRE_BLOCK_SIZE,
-    SpyreKVConnectorMetadata,
     align_to_spyre_block,
 )
 from vllm_spyre.v1.kv_connector.nixl_connector import (
     NixlReqMeta,
-    SpyreNixlConnector,
-    SpyreNixlConnectorMetadata,
-    SpyreNixlHandshakeMetadata,
+    NixlConnector,
+    NixlConnectorMetadata,
+    NixlHandshakeMetadata,
 )
 
 
@@ -22,7 +21,7 @@ def _make_mock_vllm_config(kv_role="kv_producer"):
     """Create a mock VllmConfig for testing."""
     config = MagicMock()
     config.cache_config.block_size = SPYRE_BLOCK_SIZE
-    config.kv_transfer_config.kv_connector = "SpyreNixlConnector"
+    config.kv_transfer_config.kv_connector = "NixlConnector"
     config.kv_transfer_config.kv_role = kv_role
     config.kv_transfer_config.kv_rank = 0
     config.kv_transfer_config.kv_parallel_size = 2
@@ -42,7 +41,7 @@ def _make_kv_states(num_layers=2, num_blocks=4, block_size=64,
     return kv_states
 
 
-class TestSpyreNixlConnectorInit:
+class TestNixlConnectorInit:
     """Tests for connector initialization."""
 
     def test_init_producer(self):
@@ -51,7 +50,7 @@ class TestSpyreNixlConnectorInit:
         )
 
         config = _make_mock_vllm_config(kv_role="kv_producer")
-        connector = SpyreNixlConnector(
+        connector = NixlConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -65,7 +64,7 @@ class TestSpyreNixlConnectorInit:
         )
 
         config = _make_mock_vllm_config(kv_role="kv_consumer")
-        connector = SpyreNixlConnector(
+        connector = NixlConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -73,11 +72,11 @@ class TestSpyreNixlConnectorInit:
         assert connector._is_consumer is True
 
 
-class TestSpyreNixlHandshakeMetadata:
+class TestNixlHandshakeMetadata:
     """Tests for handshake metadata."""
 
     def test_create_metadata(self):
-        meta = SpyreNixlHandshakeMetadata(
+        meta = NixlHandshakeMetadata(
             agent_name="test_agent",
             agent_metadata=b"test_data",
             engine_id="engine-0",
@@ -92,23 +91,23 @@ class TestSpyreNixlHandshakeMetadata:
         )
 
         config = _make_mock_vllm_config()
-        connector = SpyreNixlConnector(
+        connector = NixlConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
         # NIXL agent may or may not be initialized depending on environment
         metadata = connector.get_handshake_metadata()
-        # Either None (no nixl) or SpyreNixlHandshakeMetadata
+        # Either None (no nixl) or NixlHandshakeMetadata
         assert metadata is None or isinstance(
-            metadata, SpyreNixlHandshakeMetadata
+            metadata, NixlHandshakeMetadata
         )
 
 
-class TestSpyreNixlConnectorMetadata:
+class TestNixlConnectorMetadata:
     """Tests for NIXL connector metadata."""
 
     def test_empty_metadata(self):
-        meta = SpyreNixlConnectorMetadata()
+        meta = NixlConnectorMetadata()
         assert len(meta.requests) == 0
 
     def test_nixl_req_meta(self):
@@ -123,7 +122,7 @@ class TestSpyreNixlConnectorMetadata:
         assert req.remote_engine_id == "engine-1"
 
 
-class TestSpyreNixlConnectorProducer:
+class TestNixlConnectorProducer:
     """Tests for producer-side operations."""
 
     @pytest.fixture
@@ -133,7 +132,7 @@ class TestSpyreNixlConnectorProducer:
         )
 
         config = _make_mock_vllm_config(kv_role="kv_producer")
-        conn = SpyreNixlConnector(
+        conn = NixlConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -143,7 +142,7 @@ class TestSpyreNixlConnectorProducer:
 
     def test_save_kv_layer_marks_ready(self, producer):
         """Producer should track layers that are ready for remote reads."""
-        meta = SpyreNixlConnectorMetadata()
+        meta = NixlConnectorMetadata()
         meta.requests.append(
             NixlReqMeta(
                 req_id="req-1",
@@ -170,12 +169,12 @@ class TestSpyreNixlConnectorProducer:
 
     def test_start_load_kv_noop_for_producer(self, producer):
         """start_load_kv should be a no-op for producer."""
-        meta = SpyreNixlConnectorMetadata()
+        meta = NixlConnectorMetadata()
         producer.bind_connector_metadata(meta)
         producer.start_load_kv(MagicMock())  # Should not raise
 
 
-class TestSpyreNixlConnectorConsumer:
+class TestNixlConnectorConsumer:
     """Tests for consumer-side operations."""
 
     @pytest.fixture
@@ -185,7 +184,7 @@ class TestSpyreNixlConnectorConsumer:
         )
 
         config = _make_mock_vllm_config(kv_role="kv_consumer")
-        conn = SpyreNixlConnector(
+        conn = NixlConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -195,7 +194,7 @@ class TestSpyreNixlConnectorConsumer:
 
     def test_start_load_kv_handles_empty_metadata(self, consumer):
         """Should handle empty metadata gracefully."""
-        meta = SpyreNixlConnectorMetadata()
+        meta = NixlConnectorMetadata()
         consumer.bind_connector_metadata(meta)
         consumer.start_load_kv(MagicMock())  # Should not raise
 
@@ -204,7 +203,7 @@ class TestSpyreNixlConnectorConsumer:
         consumer.wait_for_layer_load("layer_0")
 
 
-class TestSpyreNixlConnectorScheduler:
+class TestNixlConnectorScheduler:
     """Tests for scheduler-side methods."""
 
     @pytest.fixture
@@ -214,7 +213,7 @@ class TestSpyreNixlConnectorScheduler:
         )
 
         config = _make_mock_vllm_config(kv_role="kv_producer")
-        return SpyreNixlConnector(
+        return NixlConnector(
             vllm_config=config,
             role=KVConnectorRole.SCHEDULER,
         )
@@ -226,7 +225,7 @@ class TestSpyreNixlConnectorScheduler:
         )
 
         config = _make_mock_vllm_config(kv_role="kv_consumer")
-        return SpyreNixlConnector(
+        return NixlConnector(
             vllm_config=config,
             role=KVConnectorRole.SCHEDULER,
         )
@@ -265,7 +264,7 @@ class TestSpyreNixlConnectorScheduler:
         scheduler_output.scheduled_new_reqs = [new_req]
 
         meta = scheduler_producer.build_connector_meta(scheduler_output)
-        assert isinstance(meta, SpyreNixlConnectorMetadata)
+        assert isinstance(meta, NixlConnectorMetadata)
         assert len(meta.requests) == 1
         assert meta.requests[0].is_store is True
 

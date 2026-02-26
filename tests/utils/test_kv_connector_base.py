@@ -1,13 +1,13 @@
-"""Tests for SpyreKVConnectorBase and utility functions."""
+"""Tests for KVConnectorBase and utility functions."""
 
 import pytest
 import torch
 
 from vllm_spyre.v1.kv_connector.base import (
     SPYRE_BLOCK_SIZE,
-    SpyreKVConnectorBase,
-    SpyreKVConnectorMetadata,
-    SpyreReqMeta,
+    KVConnectorBase,
+    KVConnectorMetadata,
+    ReqMeta,
     align_to_spyre_block,
 )
 
@@ -38,11 +38,11 @@ class TestAlignToSpyreBlock:
         assert align_to_spyre_block(8193) == 8192
 
 
-class TestSpyreReqMeta:
-    """Tests for SpyreReqMeta dataclass."""
+class TestReqMeta:
+    """Tests for ReqMeta dataclass."""
 
     def test_create_req_meta(self):
-        meta = SpyreReqMeta(
+        meta = ReqMeta(
             req_id="req-1",
             token_ids=[1, 2, 3, 4],
             num_tokens=4,
@@ -55,15 +55,15 @@ class TestSpyreReqMeta:
         assert len(meta.block_ids) == 2
 
 
-class TestSpyreKVConnectorMetadata:
-    """Tests for SpyreKVConnectorMetadata."""
+class TestKVConnectorMetadata:
+    """Tests for KVConnectorMetadata."""
 
     def test_empty_metadata(self):
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
         assert len(meta.requests) == 0
 
     def test_add_new_request(self):
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
         token_ids = list(range(128))
         meta.add_new_request(
             req_id="req-1",
@@ -78,7 +78,7 @@ class TestSpyreKVConnectorMetadata:
         assert req.num_tokens == 128  # 128 is aligned to 64
 
     def test_add_request_aligns_tokens(self):
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
         # 100 tokens should be aligned down to 64
         token_ids = list(range(100))
         meta.add_new_request(
@@ -90,7 +90,7 @@ class TestSpyreKVConnectorMetadata:
         assert meta.requests[0].num_tokens == 64
 
     def test_add_multiple_requests(self):
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
         for i in range(3):
             meta.add_new_request(
                 req_id=f"req-{i}",
@@ -104,10 +104,10 @@ class TestSpyreKVConnectorMetadata:
 
 
 class TestComputeSlotMapping:
-    """Tests for SpyreKVConnectorBase.compute_slot_mapping."""
+    """Tests for KVConnectorBase.compute_slot_mapping."""
 
     def test_single_block(self):
-        slot_mapping = SpyreKVConnectorBase.compute_slot_mapping(
+        slot_mapping = KVConnectorBase.compute_slot_mapping(
             block_ids=[2], block_size=64, num_tokens=64
         )
         assert slot_mapping.shape == (64,)
@@ -116,7 +116,7 @@ class TestComputeSlotMapping:
         assert slot_mapping[63].item() == 191
 
     def test_multiple_blocks(self):
-        slot_mapping = SpyreKVConnectorBase.compute_slot_mapping(
+        slot_mapping = KVConnectorBase.compute_slot_mapping(
             block_ids=[0, 3], block_size=64, num_tokens=128
         )
         assert slot_mapping.shape == (128,)
@@ -128,7 +128,7 @@ class TestComputeSlotMapping:
         assert slot_mapping[127].item() == 255
 
     def test_truncated_to_num_tokens(self):
-        slot_mapping = SpyreKVConnectorBase.compute_slot_mapping(
+        slot_mapping = KVConnectorBase.compute_slot_mapping(
             block_ids=[1], block_size=64, num_tokens=32
         )
         assert slot_mapping.shape == (32,)
@@ -153,7 +153,7 @@ class TestExtractInjectKV:
         kv_states = self._make_kv_states()
         slot_indices = torch.tensor([0, 1, 64, 65])
 
-        k_data, v_data = SpyreKVConnectorBase.extract_kv_for_slots(
+        k_data, v_data = KVConnectorBase.extract_kv_for_slots(
             kv_states, layer_idx=0, slot_indices=slot_indices
         )
 
@@ -170,7 +170,7 @@ class TestExtractInjectKV:
         k_data = torch.ones(2, 4, 32)
         v_data = torch.ones(2, 4, 32) * 2
 
-        SpyreKVConnectorBase.inject_kv_for_slots(
+        KVConnectorBase.inject_kv_for_slots(
             kv_states, layer_idx=0, slot_indices=slot_indices,
             k_data=k_data, v_data=v_data
         )
@@ -188,25 +188,25 @@ class TestExtractInjectKV:
         slot_indices = torch.tensor([10, 20, 30])
 
         # Extract
-        k_orig, v_orig = SpyreKVConnectorBase.extract_kv_for_slots(
+        k_orig, v_orig = KVConnectorBase.extract_kv_for_slots(
             kv_states, layer_idx=1, slot_indices=slot_indices
         )
 
         # Zero out those slots
-        SpyreKVConnectorBase.inject_kv_for_slots(
+        KVConnectorBase.inject_kv_for_slots(
             kv_states, layer_idx=1, slot_indices=slot_indices,
             k_data=torch.zeros_like(k_orig),
             v_data=torch.zeros_like(v_orig),
         )
 
         # Re-inject original data
-        SpyreKVConnectorBase.inject_kv_for_slots(
+        KVConnectorBase.inject_kv_for_slots(
             kv_states, layer_idx=1, slot_indices=slot_indices,
             k_data=k_orig, v_data=v_orig,
         )
 
         # Verify roundtrip
-        k_check, v_check = SpyreKVConnectorBase.extract_kv_for_slots(
+        k_check, v_check = KVConnectorBase.extract_kv_for_slots(
             kv_states, layer_idx=1, slot_indices=slot_indices
         )
         assert torch.equal(k_orig, k_check)

@@ -1,4 +1,4 @@
-"""Tests for SpyreExampleConnector (disk-based debug connector)."""
+"""Tests for ExampleConnector (disk-based debug connector)."""
 
 import os
 import shutil
@@ -10,11 +10,11 @@ import torch
 
 from vllm_spyre.v1.kv_connector.base import (
     SPYRE_BLOCK_SIZE,
-    SpyreKVConnectorBase,
-    SpyreKVConnectorMetadata,
+    KVConnectorBase,
+    KVConnectorMetadata,
     align_to_spyre_block,
 )
-from vllm_spyre.v1.kv_connector.example_connector import SpyreExampleConnector
+from vllm_spyre.v1.kv_connector.example_connector import ExampleConnector
 
 
 def _make_mock_vllm_config(storage_path="/tmp"):
@@ -22,7 +22,7 @@ def _make_mock_vllm_config(storage_path="/tmp"):
     config = MagicMock()
     config.cache_config.block_size = SPYRE_BLOCK_SIZE
     config.kv_transfer_config.get_from_extra_config.return_value = storage_path
-    config.kv_transfer_config.kv_connector = "SpyreExampleConnector"
+    config.kv_transfer_config.kv_connector = "ExampleConnector"
     config.kv_transfer_config.kv_role = "kv_producer"
     config.kv_transfer_config.kv_rank = 0
     config.kv_transfer_config.kv_parallel_size = 1
@@ -41,7 +41,7 @@ def _make_kv_states(num_layers=2, num_blocks=4, block_size=64,
     return kv_states
 
 
-class TestSpyreExampleConnectorInit:
+class TestExampleConnectorInit:
     """Tests for connector initialization."""
 
     def test_init_scheduler_role(self):
@@ -50,7 +50,7 @@ class TestSpyreExampleConnectorInit:
         )
 
         config = _make_mock_vllm_config()
-        connector = SpyreExampleConnector(
+        connector = ExampleConnector(
             vllm_config=config,
             role=KVConnectorRole.SCHEDULER,
         )
@@ -63,14 +63,14 @@ class TestSpyreExampleConnectorInit:
         )
 
         config = _make_mock_vllm_config()
-        connector = SpyreExampleConnector(
+        connector = ExampleConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
         assert connector._storage_path is not None
 
 
-class TestSpyreExampleConnectorSaveLoad:
+class TestExampleConnectorSaveLoad:
     """Tests for KV cache save and load operations."""
 
     @pytest.fixture
@@ -88,7 +88,7 @@ class TestSpyreExampleConnectorSaveLoad:
         )
 
         config = _make_mock_vllm_config(storage_path=tmp_storage)
-        connector = SpyreExampleConnector(
+        connector = ExampleConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -101,7 +101,7 @@ class TestSpyreExampleConnectorSaveLoad:
         pytest.importorskip("safetensors")
 
         token_ids = list(range(64))
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
         meta.add_new_request(
             req_id="req-1",
             token_ids=token_ids,
@@ -135,7 +135,7 @@ class TestSpyreExampleConnectorSaveLoad:
 
         # Create save connector with known KV data
         config = _make_mock_vllm_config(storage_path=tmp_storage)
-        save_connector = SpyreExampleConnector(
+        save_connector = ExampleConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -146,7 +146,7 @@ class TestSpyreExampleConnectorSaveLoad:
         block_ids = [1]
 
         # Save
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
         meta.add_new_request(
             req_id="req-1",
             token_ids=token_ids,
@@ -164,7 +164,7 @@ class TestSpyreExampleConnectorSaveLoad:
         save_connector.clear_connector_metadata()
 
         # Create load connector with zeroed KV data
-        load_connector = SpyreExampleConnector(
+        load_connector = ExampleConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -176,7 +176,7 @@ class TestSpyreExampleConnectorSaveLoad:
         load_connector.register_spyre_kv_caches(kv_states_loaded)
 
         # Load
-        load_meta = SpyreKVConnectorMetadata()
+        load_meta = KVConnectorMetadata()
         load_meta.add_new_request(
             req_id="req-1",
             token_ids=token_ids,
@@ -189,14 +189,14 @@ class TestSpyreExampleConnectorSaveLoad:
         load_connector.start_load_kv(forward_ctx)
 
         # Verify: the loaded KV data should match the original
-        slot_mapping = SpyreKVConnectorBase.compute_slot_mapping(
+        slot_mapping = KVConnectorBase.compute_slot_mapping(
             block_ids=block_ids, block_size=SPYRE_BLOCK_SIZE, num_tokens=64
         )
         for layer_idx in range(2):
-            k_orig, v_orig = SpyreKVConnectorBase.extract_kv_for_slots(
+            k_orig, v_orig = KVConnectorBase.extract_kv_for_slots(
                 kv_states_original, layer_idx, slot_mapping
             )
-            k_loaded, v_loaded = SpyreKVConnectorBase.extract_kv_for_slots(
+            k_loaded, v_loaded = KVConnectorBase.extract_kv_for_slots(
                 kv_states_loaded, layer_idx, slot_mapping
             )
             assert torch.allclose(k_orig, k_loaded), (
@@ -215,7 +215,7 @@ class TestSpyreExampleConnectorSaveLoad:
         worker_connector.wait_for_save()
 
 
-class TestSpyreExampleConnectorScheduler:
+class TestExampleConnectorScheduler:
     """Tests for scheduler-side connector methods."""
 
     @pytest.fixture
@@ -226,7 +226,7 @@ class TestSpyreExampleConnectorScheduler:
 
         tmp_dir = tempfile.mkdtemp(prefix="spyre_kv_sched_")
         config = _make_mock_vllm_config(storage_path=tmp_dir)
-        connector = SpyreExampleConnector(
+        connector = ExampleConnector(
             vllm_config=config,
             role=KVConnectorRole.SCHEDULER,
         )
@@ -255,7 +255,7 @@ class TestSpyreExampleConnectorScheduler:
         scheduler_output.scheduled_new_reqs = [new_req]
 
         meta = scheduler_connector.build_connector_meta(scheduler_output)
-        assert isinstance(meta, SpyreKVConnectorMetadata)
+        assert isinstance(meta, KVConnectorMetadata)
         assert len(meta.requests) == 1
         assert meta.requests[0].is_store is True
         assert meta.requests[0].req_id == "req-1"

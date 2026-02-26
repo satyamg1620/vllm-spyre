@@ -1,4 +1,4 @@
-"""Tests for SpyreOffloadingConnector (CPU memory offloading)."""
+"""Tests for OffloadingConnector (CPU memory offloading)."""
 
 import shutil
 import tempfile
@@ -9,11 +9,11 @@ import torch
 
 from vllm_spyre.v1.kv_connector.base import (
     SPYRE_BLOCK_SIZE,
-    SpyreKVConnectorBase,
-    SpyreKVConnectorMetadata,
+    KVConnectorBase,
+    KVConnectorMetadata,
 )
 from vllm_spyre.v1.kv_connector.offloading_connector import (
-    SpyreOffloadingConnector,
+    OffloadingConnector,
     _CPUKVEntry,
 )
 
@@ -23,7 +23,7 @@ def _make_mock_vllm_config(max_entries=100):
     config = MagicMock()
     config.cache_config.block_size = SPYRE_BLOCK_SIZE
     config.kv_transfer_config.get_from_extra_config.return_value = max_entries
-    config.kv_transfer_config.kv_connector = "SpyreOffloadingConnector"
+    config.kv_transfer_config.kv_connector = "OffloadingConnector"
     config.kv_transfer_config.kv_role = "kv_both"
     config.kv_transfer_config.kv_rank = 0
     config.kv_transfer_config.kv_parallel_size = 1
@@ -56,7 +56,7 @@ class TestCPUKVEntry:
         assert len(entry.kv_data) == 2
 
 
-class TestSpyreOffloadingConnectorInit:
+class TestOffloadingConnectorInit:
     """Tests for connector initialization."""
 
     def test_init(self):
@@ -65,7 +65,7 @@ class TestSpyreOffloadingConnectorInit:
         )
 
         config = _make_mock_vllm_config()
-        connector = SpyreOffloadingConnector(
+        connector = OffloadingConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -73,7 +73,7 @@ class TestSpyreOffloadingConnectorInit:
         assert len(connector._cpu_cache) == 0
 
 
-class TestSpyreOffloadingConnectorSaveLoad:
+class TestOffloadingConnectorSaveLoad:
     """Tests for CPU offload save and load operations."""
 
     @pytest.fixture
@@ -83,7 +83,7 @@ class TestSpyreOffloadingConnectorSaveLoad:
         )
 
         config = _make_mock_vllm_config()
-        conn = SpyreOffloadingConnector(
+        conn = OffloadingConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -94,7 +94,7 @@ class TestSpyreOffloadingConnectorSaveLoad:
     def test_save_populates_cpu_cache(self, connector):
         """Saving KV should create an entry in the CPU cache."""
         token_ids = list(range(64))
-        meta = SpyreKVConnectorMetadata()
+        meta = KVConnectorMetadata()
         meta.add_new_request(
             req_id="req-1",
             token_ids=token_ids,
@@ -122,7 +122,7 @@ class TestSpyreOffloadingConnectorSaveLoad:
         config = _make_mock_vllm_config()
 
         # Create connector with known KV data
-        connector = SpyreOffloadingConnector(
+        connector = OffloadingConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -133,7 +133,7 @@ class TestSpyreOffloadingConnectorSaveLoad:
         block_ids = [1]
 
         # Save to CPU
-        save_meta = SpyreKVConnectorMetadata()
+        save_meta = KVConnectorMetadata()
         save_meta.add_new_request(
             req_id="req-1",
             token_ids=token_ids,
@@ -152,12 +152,12 @@ class TestSpyreOffloadingConnectorSaveLoad:
         connector.clear_connector_metadata()
 
         # Extract original data for comparison
-        slot_mapping = SpyreKVConnectorBase.compute_slot_mapping(
+        slot_mapping = KVConnectorBase.compute_slot_mapping(
             block_ids=block_ids, block_size=SPYRE_BLOCK_SIZE, num_tokens=64
         )
         originals = []
         for layer_idx in range(2):
-            k, v = SpyreKVConnectorBase.extract_kv_for_slots(
+            k, v = KVConnectorBase.extract_kv_for_slots(
                 kv_states, layer_idx, slot_mapping
             )
             originals.append((k.clone(), v.clone()))
@@ -168,7 +168,7 @@ class TestSpyreOffloadingConnectorSaveLoad:
             layer[1][1].zero_()
 
         # Load from CPU
-        load_meta = SpyreKVConnectorMetadata()
+        load_meta = KVConnectorMetadata()
         load_meta.add_new_request(
             req_id="req-1",
             token_ids=token_ids,
@@ -182,7 +182,7 @@ class TestSpyreOffloadingConnectorSaveLoad:
 
         # Verify roundtrip
         for layer_idx in range(2):
-            k_loaded, v_loaded = SpyreKVConnectorBase.extract_kv_for_slots(
+            k_loaded, v_loaded = KVConnectorBase.extract_kv_for_slots(
                 kv_states, layer_idx, slot_mapping
             )
             k_orig, v_orig = originals[layer_idx]
@@ -194,7 +194,7 @@ class TestSpyreOffloadingConnectorSaveLoad:
             )
 
 
-class TestSpyreOffloadingConnectorEviction:
+class TestOffloadingConnectorEviction:
     """Tests for CPU cache eviction."""
 
     def test_eviction_when_max_entries_exceeded(self):
@@ -203,7 +203,7 @@ class TestSpyreOffloadingConnectorEviction:
         )
 
         config = _make_mock_vllm_config(max_entries=2)
-        connector = SpyreOffloadingConnector(
+        connector = OffloadingConnector(
             vllm_config=config,
             role=KVConnectorRole.WORKER,
         )
@@ -213,7 +213,7 @@ class TestSpyreOffloadingConnectorEviction:
         # Save 3 entries (max is 2)
         for i in range(3):
             token_ids = list(range(i * 64, (i + 1) * 64))
-            meta = SpyreKVConnectorMetadata()
+            meta = KVConnectorMetadata()
             meta.add_new_request(
                 req_id=f"req-{i}",
                 token_ids=token_ids,
@@ -235,7 +235,7 @@ class TestSpyreOffloadingConnectorEviction:
         assert len(connector._cpu_cache) <= 2
 
 
-class TestSpyreOffloadingConnectorScheduler:
+class TestOffloadingConnectorScheduler:
     """Tests for scheduler-side methods."""
 
     @pytest.fixture
@@ -245,7 +245,7 @@ class TestSpyreOffloadingConnectorScheduler:
         )
 
         config = _make_mock_vllm_config()
-        return SpyreOffloadingConnector(
+        return OffloadingConnector(
             vllm_config=config,
             role=KVConnectorRole.SCHEDULER,
         )
@@ -272,7 +272,7 @@ class TestSpyreOffloadingConnectorScheduler:
         scheduler_output.scheduled_new_reqs = [new_req]
 
         meta = scheduler_connector.build_connector_meta(scheduler_output)
-        assert isinstance(meta, SpyreKVConnectorMetadata)
+        assert isinstance(meta, KVConnectorMetadata)
         assert len(meta.requests) == 1
         assert meta.requests[0].is_store is True
 

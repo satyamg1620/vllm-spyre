@@ -1,5 +1,5 @@
 """
-SpyreKVConnectorBase - Base class for Spyre-specific KV connectors.
+KVConnectorBase - Base class for Spyre-specific KV connectors.
 
 Spyre's KV cache layout differs from upstream vLLM's paged attention:
 - KV cache is `list[tuple[Tensor, Tensor]]` per layer
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import torch
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
-    KVConnectorMetadata,
+    KVConnectorMetadata as _BaseKVConnectorMetadata,
     KVConnectorRole,
 )
 from vllm.logger import init_logger
@@ -33,7 +33,7 @@ SPYRE_BLOCK_SIZE = 64
 
 
 @dataclass
-class SpyreReqMeta:
+class ReqMeta:
     """Per-request metadata for Spyre KV connector operations."""
 
     req_id: str
@@ -44,14 +44,14 @@ class SpyreReqMeta:
 
 
 @dataclass
-class SpyreKVConnectorMetadata(KVConnectorMetadata):
+class KVConnectorMetadata(_BaseKVConnectorMetadata):
     """Metadata for Spyre KV connector operations.
 
     Passed from the scheduler-side connector to the worker-side connector
     via the SchedulerOutput.
     """
 
-    requests: list[SpyreReqMeta] = field(default_factory=list)
+    requests: list[ReqMeta] = field(default_factory=list)
 
     def add_new_request(
         self,
@@ -62,7 +62,7 @@ class SpyreKVConnectorMetadata(KVConnectorMetadata):
     ) -> None:
         num_tokens = align_to_spyre_block(len(token_ids))
         self.requests.append(
-            SpyreReqMeta(
+            ReqMeta(
                 req_id=req_id,
                 token_ids=token_ids[:num_tokens],
                 num_tokens=num_tokens,
@@ -72,7 +72,7 @@ class SpyreKVConnectorMetadata(KVConnectorMetadata):
         )
 
 
-class SpyreKVConnectorBase(KVConnectorBase_V1):
+class KVConnectorBase(KVConnectorBase_V1):
     """Base class for Spyre-specific KV connectors.
 
     Extends KVConnectorBase_V1 with helpers for Spyre's unique KV cache

@@ -1,5 +1,5 @@
 """
-SpyreNixlConnector - Network-based KV connector using NIXL for Spyre.
+NixlConnector - Network-based KV connector using NIXL for Spyre.
 
 This connector implements prefill-decode disaggregation for Spyre using
 the NIXL (Network Interface for Cross-instance Learning) library for
@@ -13,7 +13,7 @@ Key differences from upstream NixlConnector:
 
 Usage:
     Set kv_transfer_config with:
-        kv_connector: "SpyreNixlConnector"
+        kv_connector: "NixlConnector"
         kv_connector_module_path: "vllm_spyre.v1.kv_connector.nixl_connector"
         kv_role: "kv_producer" or "kv_consumer"
         kv_rank: <rank>
@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any, Optional
 import torch
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorHandshakeMetadata,
-    KVConnectorMetadata,
     KVConnectorRole,
 )
 from vllm.logger import init_logger
@@ -35,9 +34,9 @@ from vllm.v1.core.sched.output import SchedulerOutput
 
 from vllm_spyre.v1.kv_connector.base import (
     SPYRE_BLOCK_SIZE,
-    SpyreKVConnectorBase,
-    SpyreKVConnectorMetadata,
-    SpyreReqMeta,
+    KVConnectorBase,
+    KVConnectorMetadata,
+    ReqMeta,
     align_to_spyre_block,
 )
 
@@ -53,21 +52,21 @@ logger = init_logger(__name__)
 
 
 @dataclass
-class NixlReqMeta(SpyreReqMeta):
+class NixlReqMeta(ReqMeta):
     """Extended per-request metadata for NIXL transfers."""
 
     remote_engine_id: str = ""
 
 
 @dataclass
-class SpyreNixlConnectorMetadata(KVConnectorMetadata):
+class NixlConnectorMetadata(KVConnectorMetadata):
     """Metadata for NIXL KV connector operations."""
 
     requests: list[NixlReqMeta] = field(default_factory=list)
 
 
 @dataclass
-class SpyreNixlHandshakeMetadata(KVConnectorHandshakeMetadata):
+class NixlHandshakeMetadata(KVConnectorHandshakeMetadata):
     """Handshake metadata for NIXL peer discovery."""
 
     agent_name: str = ""
@@ -78,7 +77,7 @@ class SpyreNixlHandshakeMetadata(KVConnectorHandshakeMetadata):
     )
 
 
-class SpyreNixlConnector(SpyreKVConnectorBase):
+class NixlConnector(KVConnectorBase):
     """Network-based KV connector using NIXL for P/D disaggregation on Spyre.
 
     Producer (prefill) instances:
@@ -127,7 +126,7 @@ class SpyreNixlConnector(SpyreKVConnectorBase):
         self._init_nixl_agent()
 
         logger.info(
-            "SpyreNixlConnector initialized: role=%s, engine_id=%s",
+            "NixlConnector initialized: role=%s, engine_id=%s",
             self._kv_transfer_config.kv_role,
             self._engine_id,
         )
@@ -142,7 +141,7 @@ class SpyreNixlConnector(SpyreKVConnectorBase):
             logger.info("NIXL agent initialized: %s", agent_name)
         except ImportError:
             logger.warning(
-                "NIXL library not available. SpyreNixlConnector will operate "
+                "NIXL library not available. NixlConnector will operate "
                 "in stub mode. Install nixl for full functionality."
             )
             self._nixl_agent = None
@@ -158,7 +157,7 @@ class SpyreNixlConnector(SpyreKVConnectorBase):
         if self._nixl_agent is None:
             return None
 
-        metadata = SpyreNixlHandshakeMetadata(
+        metadata = NixlHandshakeMetadata(
             agent_name=self._nixl_agent.name
             if hasattr(self._nixl_agent, "name")
             else "",
@@ -177,7 +176,7 @@ class SpyreNixlConnector(SpyreKVConnectorBase):
             return
 
         for rank, peer_meta in metadata.items():
-            if not isinstance(peer_meta, SpyreNixlHandshakeMetadata):
+            if not isinstance(peer_meta, NixlHandshakeMetadata):
                 continue
             if peer_meta.engine_id == self._engine_id:
                 continue
@@ -212,7 +211,7 @@ class SpyreNixlConnector(SpyreKVConnectorBase):
             return
 
         metadata = self._get_connector_metadata()
-        assert isinstance(metadata, SpyreNixlConnectorMetadata)
+        assert isinstance(metadata, NixlConnectorMetadata)
 
         if self._spyre_kv_caches is None:
             logger.warning(
@@ -308,7 +307,7 @@ class SpyreNixlConnector(SpyreKVConnectorBase):
         metadata = self._get_connector_metadata()
         if metadata is None:
             return
-        assert isinstance(metadata, SpyreNixlConnectorMetadata)
+        assert isinstance(metadata, NixlConnectorMetadata)
 
         # For producer, mark that KV for this layer is ready for remote reads
         for req_meta in metadata.requests:
@@ -404,7 +403,7 @@ class SpyreNixlConnector(SpyreKVConnectorBase):
         For producer: mark new requests as store (KV will be generated)
         For consumer: mark requests needing load from remote
         """
-        meta = SpyreNixlConnectorMetadata()
+        meta = NixlConnectorMetadata()
 
         for new_req in scheduler_output.scheduled_new_reqs:
             token_ids = list(new_req.prompt_token_ids or [])

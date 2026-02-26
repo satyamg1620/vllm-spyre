@@ -5,26 +5,26 @@ This example demonstrates how to use KV connectors with vLLM-Spyre for
 disaggregated serving (prefill-decode separation) or KV cache reuse.
 
 Three connector types are available:
-  1. SpyreExampleConnector - Disk-based debug connector (saves/loads to files)
-  2. SpyreNixlConnector   - Network-based P/D disaggregation (via NIXL)
-  3. SpyreOffloadingConnector - CPU memory offloading for KV reuse
+  1. ExampleConnector - Disk-based debug connector (saves/loads to files)
+  2. NixlConnector   - Network-based P/D disaggregation (via NIXL)
+  3. OffloadingConnector - CPU memory offloading for KV reuse
 
 Usage:
     # Example: Run with ExampleConnector (disk-based)
     python disaggregated_inference.py \
         --model ibm-granite/granite-3.3-8b-instruct \
-        --connector SpyreExampleConnector \
+        --connector ExampleConnector \
         --storage-path /tmp/kv_cache
 
     # Example: Run with OffloadingConnector
     python disaggregated_inference.py \
         --model ibm-granite/granite-3.3-8b-instruct \
-        --connector SpyreOffloadingConnector
+        --connector OffloadingConnector
 
     # Example: Run as prefill instance with NIXL
     python disaggregated_inference.py \
         --model ibm-granite/granite-3.3-8b-instruct \
-        --connector SpyreNixlConnector \
+        --connector NixlConnector \
         --role kv_producer \
         --kv-rank 0 \
         --kv-parallel-size 2
@@ -53,11 +53,11 @@ def parse_args():
     parser.add_argument(
         "--connector",
         type=str,
-        default="SpyreExampleConnector",
+        default="ExampleConnector",
         choices=[
-            "SpyreExampleConnector",
-            "SpyreNixlConnector",
-            "SpyreOffloadingConnector",
+            "ExampleConnector",
+            "NixlConnector",
+            "OffloadingConnector",
         ],
         help="KV connector type",
     )
@@ -116,9 +116,9 @@ def parse_args():
 def build_kv_transfer_config(args) -> dict:
     """Build the kv_transfer_config dict from CLI arguments."""
     connector_module_map = {
-        "SpyreExampleConnector": "vllm_spyre.v1.kv_connector.example_connector",
-        "SpyreNixlConnector": "vllm_spyre.v1.kv_connector.nixl_connector",
-        "SpyreOffloadingConnector": "vllm_spyre.v1.kv_connector.offloading_connector",
+        "ExampleConnector": "vllm_spyre.v1.kv_connector.example_connector",
+        "NixlConnector": "vllm_spyre.v1.kv_connector.nixl_connector",
+        "OffloadingConnector": "vllm_spyre.v1.kv_connector.offloading_connector",
     }
 
     config = {
@@ -130,11 +130,11 @@ def build_kv_transfer_config(args) -> dict:
     }
 
     # Add connector-specific extra config
-    if args.connector == "SpyreExampleConnector":
+    if args.connector == "ExampleConnector":
         config["kv_connector_extra_config"] = json.dumps(
             {"shared_storage_path": args.storage_path}
         )
-    elif args.connector == "SpyreOffloadingConnector":
+    elif args.connector == "OffloadingConnector":
         config["kv_connector_extra_config"] = json.dumps(
             {"max_cpu_cache_entries": 100}
         )

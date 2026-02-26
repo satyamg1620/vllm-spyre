@@ -32,7 +32,7 @@ import vllm_spyre.perf_metrics as perf_metrics
 import vllm_spyre.utils as utils_spyre
 from vllm_spyre.model_executor.model_loader import spyre_setup
 from vllm_spyre.platform import SpyrePlatform
-from vllm_spyre.v1.kv_connector.base import SpyreKVConnectorBase
+from vllm_spyre.v1.kv_connector.base import KVConnectorBase
 from vllm_spyre.v1.worker.spyre_model_runner import (
     ChunkedPrefillModelRunner,
     SpyrePoolingModelRunner,
@@ -262,7 +262,7 @@ class SpyreWorker(WorkerBase):
             )
 
         # Initialize KV connector if configured
-        self._kv_connector: SpyreKVConnectorBase | None = None
+        self._kv_connector: KVConnectorBase | None = None
         if vllm_config.kv_transfer_config is not None:
             self._init_kv_connector(vllm_config)
 
@@ -340,7 +340,7 @@ class SpyreWorker(WorkerBase):
             config=vllm_config,
             role=KVConnectorRole.WORKER,
         )
-        if isinstance(connector, SpyreKVConnectorBase):
+        if isinstance(connector, KVConnectorBase):
             self._kv_connector = connector
             logger.info(
                 "KV connector initialized: %s",
@@ -348,8 +348,8 @@ class SpyreWorker(WorkerBase):
             )
         else:
             logger.warning(
-                "KV connector %s is not a SpyreKVConnectorBase, "
-                "Spyre-specific features will not be available",
+                "KV connector %s is not a KVConnectorBase, "
+                "connector-specific features will not be available",
                 type(connector).__name__,
             )
             self._kv_connector = None
